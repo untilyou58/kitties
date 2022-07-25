@@ -14,11 +14,18 @@ pub use pallet::*;
 // #[cfg(feature = "runtime-benchmarks")]
 // mod benchmarking;
 use frame_support::pallet_prelude::*;
+use frame_support::traits::Time;
 use frame_system::pallet_prelude::*;
-use sp_std::vec::Vec;
+use sp_runtime::traits::Hash;
+use frame_support::traits::Randomness;
+use frame_support::traits::Currency;
+type BalanceOf<T> =
+	<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 use scale_info::TypeInfo;
+use sp_std::vec::Vec;
 pub type Id = u32;
 use sp_runtime::ArithmeticError;
+use sp_runtime::traits::{SaturatedConversion};
 
 #[frame_support::pallet]
 pub mod pallet {
@@ -27,22 +34,28 @@ pub mod pallet {
 	#[derive(Clone, Encode, Decode, PartialEq, RuntimeDebug, TypeInfo)]
 	#[scale_info(skip_type_params(T))]
 	pub struct Kitty<T: Config> {
-		pub dna: Vec<u8>,
-		pub price: u64,
+		pub dna: T::Hash,
+		pub price: BalanceOf<T>,
 		pub gender: Gender,
 		pub owner: T::AccountId,
+		pub created_date: <<T as Config>::TimeProvider as Time>::Moment,
 	}
 	#[derive(Clone, Encode, Decode, PartialEq, Copy, RuntimeDebug, TypeInfo, MaxEncodedLen)]
 	pub enum Gender {
 		Male,
 		Female,
 	}
-
 	/// Configure the pallet by specifying the parameters and types on which it depends.
 	#[pallet::config]
 	pub trait Config: frame_system::Config {
 		/// Because this pallet emits events, it depends on the runtime's definition of an event.
 		type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
+		type TimeProvider: Time;
+		type Randomness: Randomness<Self::Hash, Self::BlockNumber>;
+		type Currency: Currency<Self::AccountId>;
+		
+		#[pallet::constant]
+		type MaxKittyOwned: Get<u32>;
 	}
 
 	#[pallet::pallet]
@@ -58,32 +71,46 @@ pub mod pallet {
 
 	#[pallet::storage]
 	#[pallet::getter(fn get_kitty)]
-	pub type Kitties<T: Config> = StorageMap<_, Blake2_128Concat, Vec<u8>, Kitty<T>, OptionQuery>;
+	pub type Kitties<T: Config> = StorageMap<_, Blake2_128Concat, T::Hash, Kitty<T>, OptionQuery>;
 
 	#[pallet::storage]
 	#[pallet::getter(fn kitty_owned)]
-	pub(super) type KittiesOwned<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, Vec<Vec<u8>>, ValueQuery>;
+	pub(super) type KittiesOwned<T: Config> =
+		StorageMap<_, Blake2_128Concat, T::AccountId, BoundedVec<T::Hash, T::MaxKittyOwned>, ValueQuery>;
+
+	// Create a Nonce storage item.
+	// https://docs.substrate.io/v3/runtime/storage#nonce
+	#[pallet::storage]
+	#[pallet::getter(fn next_nonce)]
+	pub(super) type Nonce<T: Config> = StorageValue<_, u128, ValueQuery>;
 
 	// Pallets use events to inform users when important changes are made.
 	// https://docs.substrate.io/v3/runtime/events-and-errors
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
-	pub enum Event<T:Config> {
+	pub enum Event<T: Config> {
 		/// A new kitty was successfully created.
-		Created { kitty: Vec<u8>, owner: T::AccountId },
-		Transferred { from: T::AccountId, to: T::AccountId, kitty:Vec<u8> },
-
+		Created {
+			kitty: T::Hash,
+			owner: T::AccountId,
+		},
+		Transferred {
+			from: T::AccountId,
+			to: T::AccountId,
+			kitty: T::Hash,
+		},
 	}
 
 	// Errors inform users that something went wrong.
 	#[pallet::error]
 	pub enum Error<T> {
 		DuplicateKitty,
+		ExceedMaxKittyOwned,
 		TooManyOwned,
 		NoKitty,
 		NotOwner,
 		TransferToSelf,
-
+		CannotConvert,
 	}
 
 	// Dispatchable functions allows users to interact with the pallet and invoke state changes.
@@ -92,42 +119,60 @@ pub mod pallet {
 
 	//extrinsic
 	#[pallet::call]
-	impl<T:Config> Pallet<T> {
-
+	impl<T: Config> Pallet<T> {
 		#[pallet::weight(0)]
 		pub fn create_kitty(origin: OriginFor<T>, dna: Vec<u8>) -> DispatchResult {
 			// ensure signed by root account
 			let owner = ensure_signed(origin)?;
-
+			// let nonce = <Nonce<T>>::get();
+			// let ran = T::Randomness::random(&(created_date.as_nanos() + (price as u128) + nonce).encode());
+			// let next_nonce = nonce.checked_add(1).ok_or(ArithmeticError::Overflow)?;
+			// let dna = ran.0.encode();
 			let gender = Self::generate_gender(&dna)?;
-			let kitty = Kitty::<T> { dna: dna.clone(), price: 0, gender, owner: owner.clone() };
+			let created_date = T::TimeProvider::now();
+			let dna = Self::generate_dna();
+
+			let kitty = Kitty::<T> {
+				dna: dna.clone(),
+				price: 0u32.into(),
+				gender,
+				owner: owner.clone(),
+				created_date,
+			};
+			let max_kitties = T::MaxKittyOwned::get();
+			let get_kitties = KittiesOwned::<T>::get(&owner);
+			ensure!((get_kitties.len() as u32) < max_kitties, Error::<T>::ExceedMaxKittyOwned);
+
+			let _convert = T::TimeProvider::now().saturated_into::<u64>();
+			let _convert_moment: <<T as Config>::TimeProvider as Time>::Moment = created_date.try_into().map_err(|_| Error::<T>::CannotConvert)?;
 
 			// Check if kitty has not existed in storage map
 			ensure!(!Kitties::<T>::contains_key(&kitty.dna), Error::<T>::DuplicateKitty);
+			// Check if owner has exceed max kitty owned
+			// <KittiesOwned<T>>::try_mutate(&owner, |kitty_owned| {
+			// 	kitty_owned.try_push(kitty.dna.clone())
+			// }).map_err(|_| Error::<T>::ExceedMaxKittyOwned)?;
 
 			// Get current id and add it to 1
 			let current_id = KittyId::<T>::get();
 			let next_id = current_id.checked_add(1).ok_or(ArithmeticError::Overflow)?;
 
 			// Append kitty to KittiesOwned
-			KittiesOwned::<T>::append(&owner, kitty.dna.clone());
+			// KittiesOwned::<T>::append(&owner, kitty.dna.clone());
+			KittiesOwned::<T>::try_append(&owner, kitty.dna.clone()).map_err(|_| Error::<T>::NoKitty)?;
 
 			// Write new kitty to storage and update idx
 			Kitties::<T>::insert(kitty.dna.clone(), kitty);
 			KittyId::<T>::put(next_id);
 
 			// Deposit our "Created" event.
-			Self::deposit_event(Event::Created { kitty: dna, owner: owner.clone()});
+			Self::deposit_event(Event::Created { kitty: dna, owner: owner.clone() });
 
 			Ok(())
 		}
 
 		#[pallet::weight(0)]
-		pub fn transfer(
-			origin: OriginFor<T>,
-			to: T::AccountId,
-			dna: Vec<u8>,
-		) -> DispatchResult {
+		pub fn transfer(origin: OriginFor<T>, to: T::AccountId, dna: T::Hash) -> DispatchResult {
 			// Make sure the caller is from a signed origin
 			let from = ensure_signed(origin)?;
 			let mut kitty = Kitties::<T>::get(&dna).ok_or(Error::<T>::NoKitty)?;
@@ -144,7 +189,7 @@ pub mod pallet {
 			}
 
 			let mut to_owned = KittiesOwned::<T>::get(&to);
-			to_owned.push(dna.clone());
+			to_owned.try_push(dna.clone()).map_err(|_| Error::<T>::ExceedMaxKittyOwned)?;
 			kitty.owner = to.clone();
 
 			// Write updates to storage
@@ -156,18 +201,22 @@ pub mod pallet {
 
 			Ok(())
 		}
-
-
 	}
 }
 
 // Helper function
-impl<T> Pallet<T> {
+impl<T:Config> Pallet<T> {
 	fn generate_gender(dna: &Vec<u8>) -> Result<Gender, Error<T>> {
 		let mut res = Gender::Female;
 		if dna.len() % 2 == 0 {
 			res = Gender::Male;
 		}
 		Ok(res)
+	}
+
+	fn generate_dna() -> T::Hash {
+		let (seed, _) = T::Randomness::random_seed();
+		let block_number = <frame_system::Pallet<T>>::block_number();
+		T::Hashing::hash_of(&(seed, block_number))
 	}
 }

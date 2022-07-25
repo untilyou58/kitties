@@ -269,6 +269,14 @@ impl pallet_sudo::Config for Runtime {
 /// Configure the pallet-mykitties in pallets/mykitties.
 impl pallet_mykitties::Config for Runtime {
 	type Event = Event;
+	type Currency = Balances;
+	type TimeProvider = pallet_timestamp::Pallet<Runtime>;
+	type Randomness = RandomnessCollectiveFlip;
+	type MaxKittyOwned = MaxKittyOwned;
+}
+
+parameter_types! {
+	pub const MaxKittyOwned : u32 = 5;
 }
 
 // Create the runtime by composing the FRAME pallets that were previously configured.
@@ -287,7 +295,7 @@ construct_runtime!(
 		TransactionPayment: pallet_transaction_payment,
 		Sudo: pallet_sudo,
 		// Include the custom logic from the pallet-template in the runtime.
-		TemplateModule: pallet_mykitties,
+		Kitties: pallet_mykitties,
 	}
 );
 
@@ -330,7 +338,7 @@ mod benches {
 		[frame_system, SystemBench::<Runtime>]
 		[pallet_balances, Balances]
 		[pallet_timestamp, Timestamp]
-		[pallet_template, TemplateModule]
+		[pallet_template, Kitties]
 	);
 }
 

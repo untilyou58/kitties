@@ -1,4 +1,5 @@
 use crate as pallet_mykitties;
+use frame_support::traits::{ConstU16, ConstU64, ConstU32, ConstU128};
 use frame_system as system;
 use sp_core::H256;
 use sp_runtime::{
@@ -17,7 +18,10 @@ frame_support::construct_runtime!(
 		UncheckedExtrinsic = UncheckedExtrinsic,
 	{
 		System: frame_system::{Pallet, Call, Config, Storage, Event<T>},
-		TemplateModule: pallet_mykitties::{Pallet, Call, Storage, Event<T>},
+		Timestamp: pallet_timestamp::{Pallet, Call, Storage},
+		Balances: pallet_balances::{Pallet, Call, Storage,Event<T>,Config<T>},
+		RandomnessCollectiveFlip: pallet_randomness_collective_flip::{Pallet},
+		Kitties: pallet_mykitties::{Pallet, Call, Storage, Event<T>},
 	}
 );
 
@@ -50,6 +54,10 @@ impl system::Config for Test {
 
 impl pallet_mykitties::Config for Test {
 	type Event = Event;
+	type Currency = Balances;
+	type TimeProvider = Timestamp;
+	type Randomness = RandomnessCollectiveFlip;
+	type MaxKittyOwned = ConstU32<10>;
 }
 
 // Build genesis storage according to the mock runtime.
