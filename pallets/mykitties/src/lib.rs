@@ -1,22 +1,23 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-/// Edit this file to define custom logic or remove it if it is not needed.
+/// Edit this file &&to define custom logic or remove it if it is not needed.
 /// Learn more about FRAME and the core library of Substrate FRAME pallets:
 /// <https://docs.substrate.io/v3/runtime/frame>
 pub use pallet::*;
 
-// #[cfg(test)]
-// mod mock;
+#[cfg(test)]
+mod mock;
 
-// #[cfg(test)]
-// mod tests;
+#[cfg(test)]
+mod tests;
 
-// #[cfg(feature = "runtime-benchmarks")]
-// mod benchmarking;
+#[cfg(feature = "runtime-benchmarks")]
+mod benchmarking;
 use frame_support::pallet_prelude::*;
 use frame_support::traits::Time;
 use frame_system::pallet_prelude::*;
 use sp_runtime::traits::Hash;
+use frame_support::dispatch::fmt;
 use frame_support::traits::Randomness;
 use frame_support::traits::Currency;
 type BalanceOf<T> =
@@ -31,7 +32,7 @@ use sp_runtime::traits::{SaturatedConversion};
 pub mod pallet {
 
 	pub use super::*;
-	#[derive(Clone, Encode, Decode, PartialEq, RuntimeDebug, TypeInfo)]
+	#[derive(Clone, Encode, Decode, PartialEq, TypeInfo)]
 	#[scale_info(skip_type_params(T))]
 	pub struct Kitty<T: Config> {
 		pub dna: T::Hash,
@@ -40,6 +41,20 @@ pub mod pallet {
 		pub owner: T::AccountId,
 		pub created_date: <<T as Config>::TimeProvider as Time>::Moment,
 	}
+
+	impl<T: Config> fmt::Debug for Kitty<T> {
+		fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+			f.debug_struct("Kitty")
+				.field("dna", &self.dna)
+				.field("price", &self.price)
+				.field("owner", &self.owner)
+				.field("gender", &self.gender)
+				.field("created_date", &self.created_date)
+				.finish()
+		}
+	}
+
+
 	#[derive(Clone, Encode, Decode, PartialEq, Copy, RuntimeDebug, TypeInfo, MaxEncodedLen)]
 	pub enum Gender {
 		Male,
@@ -75,7 +90,7 @@ pub mod pallet {
 
 	#[pallet::storage]
 	#[pallet::getter(fn kitty_owned)]
-	pub(super) type KittiesOwned<T: Config> =
+	pub type KittiesOwned<T: Config> =
 		StorageMap<_, Blake2_128Concat, T::AccountId, BoundedVec<T::Hash, T::MaxKittyOwned>, ValueQuery>;
 
 	// Create a Nonce storage item.
@@ -139,6 +154,11 @@ pub mod pallet {
 				owner: owner.clone(),
 				created_date,
 			};
+
+			log::info!("Kitty: {:?}", kitty);
+			log::warn!("DNA: {:?}", dna);
+			log::error!("Gender: {:?}", gender);
+
 			let max_kitties = T::MaxKittyOwned::get();
 			let get_kitties = KittiesOwned::<T>::get(&owner);
 			ensure!((get_kitties.len() as u32) < max_kitties, Error::<T>::ExceedMaxKittyOwned);

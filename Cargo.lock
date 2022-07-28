@@ -3600,6 +3600,7 @@ dependencies = [
  "hex-literal",
  "pallet-aura",
  "pallet-balances",
+ "pallet-demo",
  "pallet-grandpa",
  "pallet-mykitties",
  "pallet-randomness-collective-flip",
@@ -3846,6 +3847,25 @@ dependencies = [
  "log",
  "parity-scale-codec",
  "scale-info",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
+name = "pallet-demo"
+version = "4.0.0-dev"
+dependencies = [
+ "frame-benchmarking",
+ "frame-support",
+ "frame-system",
+ "log",
+ "pallet-balances",
+ "pallet-randomness-collective-flip",
+ "pallet-timestamp",
+ "parity-scale-codec",
+ "scale-info",
+ "sp-core",
+ "sp-io",
  "sp-runtime",
  "sp-std",
 ]
