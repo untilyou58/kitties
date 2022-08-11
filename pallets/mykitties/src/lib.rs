@@ -27,6 +27,7 @@ use sp_std::vec::Vec;
 pub type Id = u32;
 use sp_runtime::ArithmeticError;
 use sp_runtime::traits::{SaturatedConversion};
+use sp_core::hash::H256;
 
 #[frame_support::pallet]
 pub mod pallet {
@@ -35,11 +36,11 @@ pub mod pallet {
 	#[derive(Clone, Encode, Decode, PartialEq, TypeInfo)]
 	#[scale_info(skip_type_params(T))]
 	pub struct Kitty<T: Config> {
-		pub dna: T::Hash,
+		pub dna: Vec<u8>,
 		pub price: BalanceOf<T>,
 		pub gender: Gender,
 		pub owner: T::AccountId,
-		pub created_date: <<T as Config>::TimeProvider as Time>::Moment,
+		pub created_date: u64,
 	}
 
 	impl<T: Config> fmt::Debug for Kitty<T> {
@@ -86,12 +87,12 @@ pub mod pallet {
 
 	#[pallet::storage]
 	#[pallet::getter(fn get_kitty)]
-	pub type Kitties<T: Config> = StorageMap<_, Blake2_128Concat, T::Hash, Kitty<T>, OptionQuery>;
+	pub type Kitties<T: Config> = StorageMap<_, Blake2_128Concat, Vec<u8>, Kitty<T>, OptionQuery>;
 
 	#[pallet::storage]
 	#[pallet::getter(fn kitty_owned)]
 	pub type KittiesOwned<T: Config> =
-		StorageMap<_, Blake2_128Concat, T::AccountId, BoundedVec<T::Hash, T::MaxKittyOwned>, ValueQuery>;
+		StorageMap<_, Blake2_128Concat, T::AccountId, BoundedVec<Vec<u8>, T::MaxKittyOwned>, ValueQuery>;
 
 	// Create a Nonce storage item.
 	// https://docs.substrate.io/v3/runtime/storage#nonce
@@ -106,13 +107,13 @@ pub mod pallet {
 	pub enum Event<T: Config> {
 		/// A new kitty was successfully created.
 		Created {
-			kitty: T::Hash,
+			kitty: Vec<u8>,
 			owner: T::AccountId,
 		},
 		Transferred {
 			from: T::AccountId,
 			to: T::AccountId,
-			kitty: T::Hash,
+			kitty: Vec<u8>,
 		},
 	}
 
@@ -126,6 +127,43 @@ pub mod pallet {
 		NotOwner,
 		TransferToSelf,
 		CannotConvert,
+	}
+
+	#[pallet::genesis_config]
+	pub struct GenesisConfig<T: Config>{
+		pub genesis_kitties : Vec<Vec<u8>>,
+		pub owner: Option<T::AccountId>,
+		pub current_time : u64,
+	}
+	#[cfg(feature = "std")]
+	impl<T: Config> Default for GenesisConfig<T> {
+		fn default() -> GenesisConfig<T> {
+			GenesisConfig {
+				genesis_kitties : Vec::new(),
+				owner:  Default::default(),
+				current_time: 0,
+			}
+		}
+	}
+
+	#[pallet::genesis_build]
+	impl<T:Config> GenesisBuild<T> for GenesisConfig<T> {
+		fn build(&self) {
+
+			for item in self.genesis_kitties.iter() {
+				let kitty = Kitty::<T>{
+					// dna: item,
+					// dna: Pallet::<T>::gen_dna(),
+					dna: H256::random().as_bytes().to_vec(),
+					price : 100u32.into(),
+					owner : self.owner.clone().unwrap(),
+					gender: Gender::Female,
+					created_date:self.current_time ,
+				};
+				Kitties::<T>::insert(item, kitty);
+
+			}
+		}
 	}
 
 	// Dispatchable functions allows users to interact with the pallet and invoke state changes.
@@ -145,14 +183,14 @@ pub mod pallet {
 			// let dna = ran.0.encode();
 			let gender = Self::generate_gender(&dna)?;
 			let created_date = T::TimeProvider::now();
-			let dna = Self::generate_dna();
+			let conver = T::TimeProvider::now().saturated_into::<u64>();
 
 			let kitty = Kitty::<T> {
 				dna: dna.clone(),
 				price: 0u32.into(),
 				gender,
 				owner: owner.clone(),
-				created_date,
+				created_date:conver,
 			};
 
 			log::info!("Kitty: {:?}", kitty);
@@ -163,7 +201,7 @@ pub mod pallet {
 			let get_kitties = KittiesOwned::<T>::get(&owner);
 			ensure!((get_kitties.len() as u32) < max_kitties, Error::<T>::ExceedMaxKittyOwned);
 
-			let _convert = T::TimeProvider::now().saturated_into::<u64>();
+			// let _convert = T::TimeProvider::now().saturated_into::<u64>();
 			let _convert_moment: <<T as Config>::TimeProvider as Time>::Moment = created_date.try_into().map_err(|_| Error::<T>::CannotConvert)?;
 
 			// Check if kitty has not existed in storage map
@@ -192,7 +230,7 @@ pub mod pallet {
 		}
 
 		#[pallet::weight(0)]
-		pub fn transfer(origin: OriginFor<T>, to: T::AccountId, dna: T::Hash) -> DispatchResult {
+		pub fn transfer(origin: OriginFor<T>, to: T::AccountId, dna: Vec<u8>) -> DispatchResult {
 			// Make sure the caller is from a signed origin
 			let from = ensure_signed(origin)?;
 			let mut kitty = Kitties::<T>::get(&dna).ok_or(Error::<T>::NoKitty)?;
@@ -235,8 +273,9 @@ impl<T:Config> Pallet<T> {
 	}
 
 	fn generate_dna() -> T::Hash {
-		let (seed, _) = T::Randomness::random_seed();
+		let (seed, block) = T::Randomness::random_seed();
 		let block_number = <frame_system::Pallet<T>>::block_number();
+		log::info!("block number: {:?}", block);
 		T::Hashing::hash_of(&(seed, block_number))
 	}
 }
